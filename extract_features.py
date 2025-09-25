@@ -4,7 +4,7 @@ import os
 import csv
 
 # --- Config ---
-video_path = "top_left.mp4"  # Change this to your desired quadrant video
+video_path = "top_left.mp4"  # Change this to desired quadrant video
 output_csv = "features.csv"
 threshold_value = 60  # Adjust if needed
 min_contour_area = 200  # Filter out small noise
@@ -25,10 +25,10 @@ erode_kernel = diamond_kernel(5)
 # Open video
 cap = cv2.VideoCapture(video_path)
 if not cap.isOpened():
-    print("🚫 Could not open video!")
+    print("Could not open video!")
     exit()
 else:
-    print("✅ Video opened!")
+    print("Video opened!")
 
 fps = cap.get(cv2.CAP_PROP_FPS)
 
@@ -49,7 +49,7 @@ with open(output_csv, "w", newline="") as csvfile:
             print(f"Reading frame {frame_num}...", end="\r")
 
             if not ret or frame is None:
-                print("⚠️ Failed to read frame!")
+                print("Failed to read frame!")
                 cap.release()
                 exit()
 
@@ -93,4 +93,4 @@ with open(output_csv, "w", newline="") as csvfile:
         frame_num += 1
 
 cap.release()
-print(f"✅ Done! Features saved to {output_csv}")
+print(f"Done! Features saved to {output_csv}")
