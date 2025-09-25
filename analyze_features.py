@@ -1,12 +1,13 @@
 import pandas as pd
 import matplotlib.pyplot as plt
 
-# 1. Load the CSV (make sure it's in the same folder as this script)
+# 1. Load the CSV
 df = pd.read_csv("features.csv")
 
-# 2. Print the first few rows so you can see it worked
+# 2. Print the first few rows
 print(df.head())
-print(df.shape)     # number of rows and columns
+# number of rows and columns
+print(df.shape)     
 
 
 # 3. Plot activity over time (using 'area' as a proxy for movement)
@@ -25,4 +26,4 @@ plt.title("Distribution of Rat Movement Sizes")
 plt.savefig("rat_area_histogram.png")  # saves as a PNG
 plt.close()
 
-print("✅ Analysis done! Two figures saved: 'rat_activity_over_time.png' and 'rat_area_histogram.png'")
+print("Analysis done! Two figures saved: 'rat_activity_over_time.png' and 'rat_area_histogram.png'")
