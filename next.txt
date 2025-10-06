@@ -1,0 +1,3 @@
+opencv: superimage, super resolution
+  improve reslution in sections of frames
+take 1 fps
