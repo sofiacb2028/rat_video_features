@@ -1,0 +1,18 @@
+*.mp4
+*.avi
+*.mov
+
+# Ignore raw video data
+data/
+
+# Ignore logs
+logs/
+
+# Ignore Python cache files
+__pycache__/
+*.pyc
+
+# Ignore Jupyter checkpoints
+.ipynb_checkpoints/
+
+results/csv/*.csv
