@@ -1,3 +1,12 @@
+# configurable: change these to personalize script
+# MAX_MINUTES = 30        Change to 60 for 1 hour, or None for entire video
+# TARGET_FPS = 15         Change to 10 for slower processing, 30 for full fps
+# START_MINUTE = 0        Change to 120 to start at 2-hour mark
+# SHOW_VIZ = True         Set to False for 2x faster processing (no video output)
+
+
+
+
 import cv2
 import pandas as pd
 import numpy as np
