@@ -239,7 +239,7 @@ def main():
     START_MINUTE = 25        # Start from beginning (change if you want later segment)
     SHOW_VIZ = True         # Set to False for faster processing without video output
     
-    print("🎯 Configurable Rat Motion Detection")
+    print("Configurable Rat Motion Detection")
     print("=" * 50)
     
     process_video_with_motion(
