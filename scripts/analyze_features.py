@@ -26,4 +26,4 @@ plt.title("Distribution of Rat Movement Sizes")
 plt.savefig("rat_area_histogram.png")  # saves as a PNG
 plt.close()
 
-print("Analysis done! Two figures saved: 'rat_activity_over_time.png' and 'rat_area_histogram.png'")
+print("Two figures saved: 'rat_activity_over_time.png' and 'rat_area_histogram.png'")
