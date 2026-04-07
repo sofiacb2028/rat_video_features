@@ -85,6 +85,8 @@ def process_video_with_motion(video_path, output_csv, output_video,
     frames_with_detection = 0
     actual_time_min = start_minute
 
+    last_known = {'x': None, 'y': None, 'w': None, 'h': None, 'area': None}
+
     print(f"\nProcessing video...")
 
     total_to_process = (end_frame - start_frame) // frame_skip
@@ -102,18 +104,27 @@ def process_video_with_motion(video_path, output_csv, output_video,
         actual_time_sec = frame_idx / original_fps
         actual_time_min = actual_time_sec / 60
 
+        if x is not None:
+            last_known = {'x': x, 'y': y, 'w': w, 'h': h, 'area': area}
+            frames_with_detection += 1
+        else:
+            x    = last_known['x']
+            y    = last_known['y']
+            w    = last_known['w']
+            h    = last_known['h']
+            area = last_known['area']
+
         position_data.append({
             'frame_num': frame_idx,
             'time_sec': actual_time_sec,
             'time_min': actual_time_min,
-            'x': x, 'y': y,
-            'width': w, 'height': h,
-            'area': area,
-            'detection': x is not None
+            'x': x,
+            'y': y,
+            'width': w,
+            'height': h,
+            'area': area
         })
 
-        if x is not None:
-            frames_with_detection += 1
         frames_processed += 1
 
         detection_rate = (frames_with_detection / frames_processed) * 100
@@ -146,6 +157,13 @@ def process_video_with_motion(video_path, output_csv, output_video,
     pbar.close()
 
     df = pd.DataFrame(position_data)
+
+    first_det = df[df['x'].notna()].iloc[0] if df['x'].notna().any() else None
+    if first_det is not None:
+        mask = df.index < df[df['x'].notna()].index[0]
+        for col in ('x', 'y', 'width', 'height', 'area'):
+            df.loc[mask, col] = first_det[col]
+
     df.to_csv(output_csv, index=False)
 
     cap.release()
@@ -187,7 +205,6 @@ def main():
 
     args = parser.parse_args()
 
-    # Treat 0 as "process entire video" (mirrors original None behavior)
     max_minutes = args.max_minutes if args.max_minutes > 0 else None
 
     os.makedirs(os.path.dirname(os.path.abspath(args.output_csv)), exist_ok=True)
