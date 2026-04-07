@@ -85,8 +85,6 @@ def process_video_with_motion(video_path, output_csv, output_video,
     frames_with_detection = 0
     actual_time_min = start_minute
 
-    last_known = {'x': None, 'y': None, 'w': None, 'h': None, 'area': None}
-
     print(f"\nProcessing video...")
 
     total_to_process = (end_frame - start_frame) // frame_skip
@@ -105,14 +103,7 @@ def process_video_with_motion(video_path, output_csv, output_video,
         actual_time_min = actual_time_sec / 60
 
         if x is not None:
-            last_known = {'x': x, 'y': y, 'w': w, 'h': h, 'area': area}
             frames_with_detection += 1
-        else:
-            x    = last_known['x']
-            y    = last_known['y']
-            w    = last_known['w']
-            h    = last_known['h']
-            area = last_known['area']
 
         position_data.append({
             'frame_num': frame_idx,
@@ -122,7 +113,7 @@ def process_video_with_motion(video_path, output_csv, output_video,
             'y': y,
             'width': w,
             'height': h,
-            'area': area
+            'area': area,
         })
 
         frames_processed += 1
@@ -158,11 +149,16 @@ def process_video_with_motion(video_path, output_csv, output_video,
 
     df = pd.DataFrame(position_data)
 
-    first_det = df[df['x'].notna()].iloc[0] if df['x'].notna().any() else None
-    if first_det is not None:
-        mask = df.index < df[df['x'].notna()].index[0]
-        for col in ('x', 'y', 'width', 'height', 'area'):
-            df.loc[mask, col] = first_det[col]
+    for col in ('x', 'y', 'width', 'height', 'area'):
+        df[col] = (
+            df[col]
+            .interpolate(method='linear', limit_direction='both')
+            .round()
+            .astype('Int64')
+        )
+
+    raw_missing = sum(1 for row in position_data if row['x'] is None)
+    print(f"  - Interpolated {raw_missing} frames ({raw_missing / frames_processed * 100:.1f}%)")
 
     df.to_csv(output_csv, index=False)
 
@@ -171,7 +167,7 @@ def process_video_with_motion(video_path, output_csv, output_video,
         out.release()
 
     detection_rate = (frames_with_detection / frames_processed) * 100
-    print(f"\n✓ Processing complete!")
+    print(f"\nProcessing complete!")
     print(f"  - Processed {frames_processed} frames ({frames_processed * frame_skip} total frames considered)")
     print(f"  - Time analyzed: {start_minute}-{actual_time_min:.1f} minutes")
     print(f"  - Movement detections: {frames_with_detection} ({detection_rate:.1f}%)")
@@ -188,12 +184,10 @@ def main():
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
 
-    # Required arguments
     parser.add_argument("video_path", help="Path to input video file")
     parser.add_argument("output_csv", help="Path for output CSV file")
     parser.add_argument("output_video", help="Path for output visualization video")
 
-    # Configurable parameters
     parser.add_argument("--max-minutes", type=float, default=1,
                         help="Maximum minutes to process (omit or set to 0 for entire video)")
     parser.add_argument("--fps", type=int, default=15,
