@@ -6,7 +6,7 @@ import argparse
 import os
 
 
-EXCLUDED_COLS = ("epoch_id", "frame_num", "time_sec", "time_min")
+EXCLUDED_COLS = ("unique_epoch_id", "frame_num", "time_sec", "time_min")
 
 
 def compute_psd_features(signal, fs):
@@ -60,7 +60,7 @@ def compute_time_features(signal):
 
 
 def compute_epoch_features(epoch_df, numeric_cols, fs):
-    row = {"epoch_id": epoch_df["epoch_id"].iloc[0]}
+    row = {"unique_epoch_id": epoch_df["unique_epoch_id"].iloc[0]}
 
     for col in numeric_cols:
         signal = epoch_df[col].dropna().to_numpy(dtype=float)
@@ -88,7 +88,7 @@ def bin_to_epochs(input_csv, output_csv, bin_size_sec=10, target_fps=15):
     print(f"Time range: {df['time_sec'].min():.1f}s – {df['time_sec'].max():.1f}s")
     print(f"Columns: {list(df.columns)}")
 
-    df["epoch_id"] = (df["time_sec"] // bin_size_sec).astype(int)
+    df["unique_epoch_id"] = (df["time_sec"] // bin_size_sec).astype(int)
 
     numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
     numeric_cols = [c for c in numeric_cols if c not in EXCLUDED_COLS]
@@ -97,12 +97,12 @@ def bin_to_epochs(input_csv, output_csv, bin_size_sec=10, target_fps=15):
     print(f"Sampling rate: {target_fps} Hz  →  max resolvable frequency: {target_fps / 2} Hz")
 
     rows = []
-    for epoch_id, epoch_df in df.groupby("epoch_id"):
+    for unique_epoch_id, epoch_df in df.groupby("unique_epoch_id"):
         rows.append(compute_epoch_features(epoch_df, numeric_cols, fs=target_fps))
 
     result = pd.DataFrame(rows)
 
-    result.insert(1, "time_sec", result["epoch_id"] * bin_size_sec)
+    result.insert(1, "time_sec", result["unique_epoch_id"] * bin_size_sec)
 
     os.makedirs(os.path.dirname(os.path.abspath(output_csv)), exist_ok=True)
     result.to_csv(output_csv, index=False)

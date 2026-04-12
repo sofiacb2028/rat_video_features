@@ -4,10 +4,10 @@ import numpy as np
 import os
 import argparse
 from tqdm import tqdm
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
 def setup_background_subtractor():
-    """Initialize background subtractor for moving object detection"""
     backSub = cv2.createBackgroundSubtractorMOG2(
         history=500,
         varThreshold=16,
@@ -17,7 +17,6 @@ def setup_background_subtractor():
 
 
 def detect_moving_rat(frame, backSub, frame_count):
-    """Detect moving rat using background subtraction"""
     fgMask = backSub.apply(frame)
 
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
@@ -40,12 +39,14 @@ def detect_moving_rat(frame, backSub, frame_count):
     return (None, None, None, None, None, fgMask)
 
 
-def process_video_with_motion(video_path, output_csv, output_video,
-                              max_minutes=30, target_fps=15,
-                              start_minute=0, show_visualization=True):
+def process_video(video_id, video_path, output_csv, output_video,
+                  max_minutes=30, target_fps=15,
+                  start_minute=0, show_visualization=True):
+    print(f"\n[Video {video_id}] Starting: {video_path}")
+
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
-        print(f"Error: Could not open video {video_path}")
+        print(f"[Video {video_id}] Error: Could not open {video_path}")
         return False
 
     original_fps = cap.get(cv2.CAP_PROP_FPS)
@@ -54,8 +55,7 @@ def process_video_with_motion(video_path, output_csv, output_video,
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     total_minutes = total_frames / (original_fps * 60)
 
-    print(f"Video: {total_frames} frames, {original_fps} fps, {width}x{height}")
-    print(f"Video duration: {total_minutes:.1f} minutes")
+    print(f"[Video {video_id}] {total_frames} frames, {original_fps} fps, {width}x{height}, {total_minutes:.1f} min")
 
     start_frame = int(start_minute * 60 * original_fps)
     if max_minutes:
@@ -65,12 +65,6 @@ def process_video_with_motion(video_path, output_csv, output_video,
         end_frame = total_frames
 
     frame_skip = max(1, int(original_fps / target_fps))
-
-    print(f"\nProcessing parameters:")
-    print(f"  - Time range: {start_minute}-{start_minute + max_minutes if max_minutes else total_minutes:.1f} minutes")
-    print(f"  - Frames: {start_frame}-{end_frame} ({(end_frame - start_frame):,} total)")
-    print(f"  - Target FPS: {target_fps} (processing every {frame_skip} frames)")
-    print(f"  - Estimated frames to process: {(end_frame - start_frame) // frame_skip:,}")
 
     backSub = setup_background_subtractor()
 
@@ -85,10 +79,8 @@ def process_video_with_motion(video_path, output_csv, output_video,
     frames_with_detection = 0
     actual_time_min = start_minute
 
-    print(f"\nProcessing video...")
-
     total_to_process = (end_frame - start_frame) // frame_skip
-    pbar = tqdm(total=total_to_process)
+    pbar = tqdm(total=total_to_process, desc=f"Video {video_id}", position=video_id)
 
     for frame_idx in range(start_frame, end_frame, frame_skip):
         cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
@@ -106,20 +98,18 @@ def process_video_with_motion(video_path, output_csv, output_video,
             frames_with_detection += 1
 
         position_data.append({
+            'video_id':  video_id,
             'frame_num': frame_idx,
-            'time_sec': actual_time_sec,
-            'time_min': actual_time_min,
-            'x': x,
-            'y': y,
-            'width': w,
-            'height': h,
-            'area': area,
+            'time_sec':  actual_time_sec,
+            'time_min':  actual_time_min,
+            'x':         x,
+            'y':         y,
+            'width':     w,
+            'height':    h,
+            'area':      area,
         })
 
         frames_processed += 1
-
-        detection_rate = (frames_with_detection / frames_processed) * 100
-        pbar.set_description(f"Detections: {frames_with_detection}/{frames_processed} ({detection_rate:.1f}%)")
         pbar.update(1)
 
         if show_visualization and out:
@@ -139,10 +129,6 @@ def process_video_with_motion(video_path, output_csv, output_video,
 
             fgMask_display = cv2.cvtColor(fgMask, cv2.COLOR_GRAY2BGR)
             combined_frame = np.hstack([display_frame, fgMask_display])
-            cv2.putText(combined_frame, "Original + Detection", (10, height - 10),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-            cv2.putText(combined_frame, "Background Subtraction Mask", (width + 10, height - 10),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
             out.write(combined_frame)
 
     pbar.close()
@@ -151,14 +137,14 @@ def process_video_with_motion(video_path, output_csv, output_video,
 
     for col in ('x', 'y', 'width', 'height', 'area'):
         df[col] = (
-            df[col]
+            pd.to_numeric(df[col], errors='coerce')
             .interpolate(method='linear', limit_direction='both')
             .round()
             .astype('Int64')
         )
 
     raw_missing = sum(1 for row in position_data if row['x'] is None)
-    print(f"  - Interpolated {raw_missing} frames ({raw_missing / frames_processed * 100:.1f}%)")
+    detection_rate = (frames_with_detection / frames_processed) * 100
 
     df.to_csv(output_csv, index=False)
 
@@ -166,55 +152,62 @@ def process_video_with_motion(video_path, output_csv, output_video,
     if out:
         out.release()
 
-    detection_rate = (frames_with_detection / frames_processed) * 100
-    print(f"\nProcessing complete!")
-    print(f"  - Processed {frames_processed} frames ({frames_processed * frame_skip} total frames considered)")
-    print(f"  - Time analyzed: {start_minute}-{actual_time_min:.1f} minutes")
-    print(f"  - Movement detections: {frames_with_detection} ({detection_rate:.1f}%)")
-    print(f"  - Position data saved to: {output_csv}")
-    if show_visualization:
-        print(f"  - Visualization saved to: {output_video}")
+    print(f"\n[Video {video_id}] Done — {frames_processed} frames, "
+          f"{detection_rate:.1f}% detections, {raw_missing} interpolated. "
+          f"Saved to {output_csv}")
 
     return True
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Rat motion detection via background subtraction",
+        description="Rat motion detection — process multiple videos in parallel",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
 
-    parser.add_argument("video_path", help="Path to input video file")
-    parser.add_argument("output_csv", help="Path for output CSV file")
-    parser.add_argument("output_video", help="Path for output visualization video")
-
+    parser.add_argument("video_paths",   nargs='+', help="One or more input video files")
+    parser.add_argument("output_dir",    help="Directory to write output CSVs and videos")
     parser.add_argument("--max-minutes", type=float, default=1,
-                        help="Maximum minutes to process (omit or set to 0 for entire video)")
-    parser.add_argument("--fps", type=int, default=15,
+                        help="Max minutes to process per video (0 = full video)")
+    parser.add_argument("--fps",         type=int,   default=15,
                         help="Target frames per second to analyze")
-    parser.add_argument("--start-minute", type=float, default=0,
-                        help="Minute in the video to start processing from")
-    parser.add_argument("--no-viz", action="store_true",
-                        help="Disable visualization output (faster processing)")
+    parser.add_argument("--start-minute",type=float, default=0,
+                        help="Minute to start processing from")
+    parser.add_argument("--no-viz",      action="store_true",
+                        help="Disable visualization output")
 
     args = parser.parse_args()
 
     max_minutes = args.max_minutes if args.max_minutes > 0 else None
+    os.makedirs(args.output_dir, exist_ok=True)
 
-    os.makedirs(os.path.dirname(os.path.abspath(args.output_csv)), exist_ok=True)
+    jobs = []
+    for video_id, video_path in enumerate(args.video_paths):
+        stem     = os.path.splitext(os.path.basename(video_path))[0]
+        out_csv  = os.path.join(args.output_dir, f"video_{video_id}_{stem}.csv")
+        out_vid  = os.path.join(args.output_dir, f"video_{video_id}_{stem}_viz.mp4")
+        jobs.append((video_id, video_path, out_csv, out_vid))
 
-    print("Configurable Rat Motion Detection")
-    print("=" * 50)
+    print(f"Processing {len(jobs)} video(s) with {len(jobs)} threads...\n")
 
-    process_video_with_motion(
-        video_path=args.video_path,
-        output_csv=args.output_csv,
-        output_video=args.output_video,
-        max_minutes=max_minutes,
-        target_fps=args.fps,
-        start_minute=args.start_minute,
-        show_visualization=not args.no_viz
-    )
+    with ThreadPoolExecutor(max_workers=len(jobs)) as executor:
+        futures = {
+            executor.submit(
+                process_video,
+                video_id, video_path, out_csv, out_vid,
+                max_minutes, args.fps, args.start_minute, not args.no_viz
+            ): video_id
+            for video_id, video_path, out_csv, out_vid in jobs
+        }
+
+        for future in as_completed(futures):
+            video_id = futures[future]
+            try:
+                future.result()
+            except Exception as e:
+                print(f"[Video {video_id}] Failed: {e}")
+
+    print("\nAll videos processed.")
 
 
 if __name__ == "__main__":
