@@ -6,7 +6,7 @@ import argparse
 import os
 
 
-EXCLUDED_COLS = ("unique_epoch_id", "frame_num", "time_sec", "time_min")
+EXCLUDED_COLS = ("unique_epoch_id", "video_id", "frame_num", "time_sec", "time_min")
 
 
 def compute_psd_features(signal, fs):
@@ -60,7 +60,10 @@ def compute_time_features(signal):
 
 
 def compute_epoch_features(epoch_df, numeric_cols, fs):
-    row = {"unique_epoch_id": epoch_df["unique_epoch_id"].iloc[0]}
+    row = {
+        "unique_epoch_id": epoch_df["unique_epoch_id"].iloc[0],
+        "video_id": epoch_df["video_id"].iloc[0],
+    }
 
     for col in numeric_cols:
         signal = epoch_df[col].dropna().to_numpy(dtype=float)

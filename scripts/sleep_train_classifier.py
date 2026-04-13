@@ -1,16 +1,20 @@
 import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.model_selection import train_test_split
 from sklearn.impute import SimpleImputer
 from sklearn import metrics
 from sklearn.metrics import classification_report
+from sklearn.model_selection import LeaveOneGroupOut
+from xgboost import XGBClassifier
 import argparse
-import os
+
 
 WAKE_STATE  = 0
 SLEEP_STATE = 1
 
-NON_FEATURE_COLS = {'unique_epoch_id', 'time_sec', 'stage'}
+NON_FEATURE_COLS = {'unique_epoch_id', 'time_sec', 'stage', 'video_id'}
+
+RANDOM_STATE = 42
+N_ESTIMATORS = 100
 
 
 def get_feature_cols(df):
@@ -19,29 +23,86 @@ def get_feature_cols(df):
 
 def get_balanced_data(df):
     counts = df['stage'].value_counts()
-    print("Class counts before balancing:")
-    print(counts.sort_index())
     n = int(counts.min())
-
-    wake  = df[df['stage'] == WAKE_STATE].sample(n=n, random_state=42)
-    sleep = df[df['stage'] == SLEEP_STATE].sample(n=n, random_state=42)
-
-    balanced = pd.concat([wake, sleep]).sample(frac=1, random_state=42).reset_index(drop=True)
-    print(f"\nBalanced to {n} epochs per class ({n * 2} total)\n")
-    return balanced
+    wake  = df[df['stage'] == WAKE_STATE].sample(n=n, random_state=RANDOM_STATE)
+    sleep = df[df['stage'] == SLEEP_STATE].sample(n=n, random_state=RANDOM_STATE)
+    return pd.concat([wake, sleep]).sample(frac=1, random_state=RANDOM_STATE).reset_index(drop=True)
 
 
-def random_forest(X_train, X_test, Y_train, Y_test):
-    clf = RandomForestClassifier(n_estimators=100, random_state=42, n_jobs=-1)
-    clf.fit(X_train, Y_train)
+def build_classifier(classifier):
+    if classifier == 'rf':
+        return RandomForestClassifier(n_estimators=N_ESTIMATORS, random_state=RANDOM_STATE, n_jobs=-1)
+    elif classifier == 'xgb':
+        return XGBClassifier(n_estimators=N_ESTIMATORS, random_state=RANDOM_STATE, n_jobs=1, eval_metric='logloss')
 
-    Y_pred_test = clf.predict(X_test)
 
-    print("=== Test performance ===")
-    print(classification_report(Y_test, Y_pred_test, target_names=['Wake', 'Sleep']))
-    print(f"Test accuracy: {metrics.accuracy_score(Y_test, Y_pred_test):.3f}")
+def run_leave_one_out_cv(df, features, imputer, args):
+    logo = LeaveOneGroupOut()
 
-    return clf, metrics.accuracy_score(Y_test, Y_pred_test)
+    X = df[features].values
+    y = df['stage'].values
+    groups = df['video_id'].values
+
+    print(f"Running Leave-One-Group-Out CV over {len(set(groups))} mice\n")
+
+    results = []
+
+    for fold, (train_idx, test_idx) in enumerate(logo.split(X, y, groups)):
+        test_id = groups[test_idx][0]
+
+        print(f"{'='*50}")
+        print(f"Fold {fold} | Test mouse: video_id={test_id}")
+
+        X_train, X_test = X[train_idx], X[test_idx]
+        Y_train, Y_test = y[train_idx], y[test_idx]
+
+        df_train = df.iloc[train_idx].copy()
+        df_test  = df.iloc[test_idx].copy()
+
+        X_train = imputer.fit_transform(X_train)
+        X_test  = imputer.transform(X_test)
+
+        df_train[features] = X_train
+        df_train = get_balanced_data(df_train)
+
+        X_train = df_train[features].values
+        Y_train = df_train['stage'].values
+
+        print(f"Train epochs: {len(df_train)}  |  Test epochs: {len(df_test)}")
+        print(f"Test class distribution: {dict(pd.Series(Y_test).value_counts().sort_index())}\n")
+
+        clf = build_classifier(args.classifier)
+        clf.fit(X_train, Y_train)
+        Y_pred = clf.predict(X_test)
+
+        acc = metrics.accuracy_score(Y_test, Y_pred)
+
+        print(classification_report(Y_test, Y_pred, target_names=['Wake', 'Sleep']))
+        print(f"Accuracy: {acc:.3f}\n")
+
+        results.append({
+            'test_video_id': test_id,
+            'accuracy': acc,
+            'n_train': len(df_train),
+            'n_test': len(df_test),
+        })
+
+        if args.save_predictions:
+            out_fname = f"predictions_test_video_{test_id}.csv"
+            pd.DataFrame({
+                'unique_epoch_id': df_test['unique_epoch_id'].values,
+                'label': Y_test,
+                'prediction': Y_pred,
+            }).to_csv(out_fname, index=False)
+
+    results_df = pd.DataFrame(results)
+
+    print(f"{'='*50}")
+    print("=== Leave One Out Cross Validation Summary ===")
+    print(results_df.to_string(index=False))
+    print(f"\nMean accuracy: {results_df['accuracy'].mean():.3f} ± {results_df['accuracy'].std():.3f}")
+
+    return results_df
 
 
 def train(args):
@@ -53,56 +114,18 @@ def train(args):
     print(f"Class distribution:\n{df['stage'].value_counts().sort_index()}\n")
 
     imputer = SimpleImputer(strategy='constant', fill_value=0)
-    df[features] = imputer.fit_transform(df[features])
 
-    df_balanced = get_balanced_data(df)
-
-    df_train, df_test = train_test_split(
-        df_balanced, test_size=0.2, random_state=42,
-        stratify=df_balanced['stage']
-    )
-
-    X_train = df_train[features].values
-    X_test  = df_test[features].values
-    Y_train = df_train['stage'].values
-    Y_test  = df_test['stage'].values
-
-    print(f"Train size: {len(df_train)}  |  Test size: {len(df_test)}\n")
-
-    if args.classifier == 'rf':
-        clf, test_acc = random_forest(X_train, X_test, Y_train, Y_test)
-
-    importances = pd.Series(clf.feature_importances_, index=features)
-    print("\n=== Top 15 most important features ===")
-    print(importances.sort_values(ascending=False).head(15).to_string())
-
-    if args.predict_dataset is not None:
-        df_infer = pd.read_csv(args.predict_dataset)
-        df_infer[features] = imputer.transform(df_infer[features])
-
-        Y_infer      = df_infer['stage'].values
-        Y_infer_pred = clf.predict(df_infer[features].values)
-
-        print("\n=== Inference dataset performance ===")
-        print(classification_report(Y_infer, Y_infer_pred, target_names=['Wake', 'Sleep']))
-
-        out_fname = os.path.splitext(args.predict_dataset)[0] + '_predictions.csv'
-        pd.DataFrame({
-            'unique_epoch_id': df_infer['unique_epoch_id'].values,
-            'label':           Y_infer,
-            'prediction':      Y_infer_pred,
-        }).to_csv(out_fname, index=False)
-        print(f"Predictions saved to: {out_fname}")
+    run_leave_one_out_cv(df, features, imputer, args)
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Sleep/wake classifier for rat tracking data',
+        description='Sleep/wake classifier for rat tracking data — leave-one-out CV by mouse',
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    parser.add_argument('--train_dataset',   required=True, help='Path to CSV with features + stage column')
-    parser.add_argument('--classifier',      required=True, choices=['rf'], help='Classifier to use')
-    parser.add_argument('--predict_dataset', default=None,  help='Optional separate CSV to predict on')
+    parser.add_argument('--train_dataset',    required=True, help='Path to CSV with features + stage column')
+    parser.add_argument('--classifier',       required=True, choices=['rf', 'xgb'], help='Classifier to use')
+    parser.add_argument('--save_predictions', action='store_true', help='Save per-epoch predictions for each fold')
     args = parser.parse_args()
     train(args)
 
